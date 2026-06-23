@@ -26,7 +26,7 @@ async function run() {
     "stream": true
   };
 
-  const res = await fetch('http://localhost:8080/responses', {
+  const res = await fetch('https://blackbox-proxy-u5jm.onrender.com/responses', {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
@@ -37,8 +37,18 @@ async function run() {
 
   console.log('Status:', res.status);
   
-  const text = await res.text();
-  console.log('Response body:', text);
+  if (!res.body) {
+    console.log('No body');
+    return;
+  }
+  
+  res.body.on('data', chunk => {
+    console.log(chunk.toString());
+  });
+  
+  res.body.on('end', () => {
+    console.log('Stream ended');
+  });
 }
 
 run().catch(console.error);

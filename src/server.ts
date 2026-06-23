@@ -151,21 +151,16 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
       res.setHeader('Connection', 'keep-alive');
       res.flushHeaders();
 
-      const pingInterval = setInterval(() => {
-        res.write(': keep-alive\n\n');
-      }, 10000);
-
       try {
         const generator = provider.streamChatCompletion(apiKey, messages, model, options);
         for await (const chunk of generator) {
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
         }
-        res.write('data: [DONE]\n\n');
       } catch (error: any) {
         console.error('Streaming error:', error);
         res.write(`data: ${JSON.stringify({ error: { message: error.message || 'Internal server error' } })}\n\n`);
       } finally {
-        clearInterval(pingInterval);
+        res.write('data: [DONE]\n\n');
         res.end();
       }
       return;
