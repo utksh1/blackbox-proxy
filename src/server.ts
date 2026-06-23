@@ -146,31 +146,29 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
     console.log("FINAL TOOL CHOICE:", JSON.stringify(tool_choice, null, 2));
 
     if (stream) {
-      const generator = provider.streamChatCompletion(apiKey, messages, model, options);
-
-      // Pull the first chunk before sending SSE headers so auth/model failures
-      // can still return the correct HTTP status instead of a 200 SSE error.
-      const first = await generator.next();
-
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
-      
+      res.flushHeaders();
+
+      const pingInterval = setInterval(() => {
+        res.write(': keep-alive\n\n');
+      }, 10000);
+
       try {
-        if (!first.done) {
-          res.write(`data: ${JSON.stringify(first.value)}\n\n`);
-        }
+        const generator = provider.streamChatCompletion(apiKey, messages, model, options);
         for await (const chunk of generator) {
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
         }
         res.write('data: [DONE]\n\n');
-        res.end();
-      } catch (err: any) {
-        // Stream may have already started, so we just log and end
-        console.error('Streaming error:', err);
-        res.write(`data: ${JSON.stringify({ error: err.message || 'Stream failed' })}\n\n`);
+      } catch (error: any) {
+        console.error('Streaming error:', error);
+        res.write(`data: ${JSON.stringify({ error: { message: error.message || 'Internal server error' } })}\n\n`);
+      } finally {
+        clearInterval(pingInterval);
         res.end();
       }
+      return;
     } else {
       const response = await provider.chatCompletion(apiKey, messages, model, options);
       res.json(response);
