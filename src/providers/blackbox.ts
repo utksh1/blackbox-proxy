@@ -67,12 +67,7 @@ export class BlackboxProvider extends BaseProvider {
     const modelId = normalizeModelId(body.model as string);
     const isMinimax = isMinimaxModel(modelId);
     const isKimi = isKimiModel(modelId);
-    
-    if (isMinimax) {
-      body.model = 'minimax-m2';
-    } else {
-      body.model = modelId;
-    }
+    body.model = modelId;
 
     // Auto-extract VS Code tokens if no explicit apiKey is provided
     let effectiveApiKey = isPlaceholderKey(apiKey) ? undefined : apiKey?.trim();
