@@ -52,7 +52,7 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
     
     const apiKey = authHeader.replace('Bearer ', '').trim();
     
-    const {
+    let {
       model = 'gpt-4o-mini',
       temperature,
       max_tokens,
@@ -62,6 +62,17 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
       tool_choice,
       parallel_tool_calls
     } = req.body;
+
+    // Translate tools to standard OpenAI format if they are missing the 'function' wrapper
+    if (tools && Array.isArray(tools)) {
+      tools = tools.map((t: any) => {
+        if (t.name && !t.function) {
+          // Anthropic/Custom format often just passes the tool directly
+          return { type: 'function', function: t };
+        }
+        return t;
+      });
+    }
 
     let messages = req.body.messages;
 
