@@ -1,0 +1,7 @@
+node_modules
+dist
+.env
+.DS_Store
+globalState.json
+blackboxagent.json
+blackbox.json

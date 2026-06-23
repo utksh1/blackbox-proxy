@@ -1,0 +1,329 @@
+openapi: 3.0.3
+info:
+  title: FreeLLMAPI - Blackbox Provider
+  description: |
+    OpenAPI specification for the Blackbox provider plugin in FreeLLMAPI.
+    This provider implements an OpenAI-compatible `/chat/completions` interface
+    that proxies requests to upstream Blackbox routes.
+    
+    It supports tool calling, streaming, Minimax's no-key route, and optional
+    Blackbox customer/API tokens for entitlement-gated models such as Kimi.
+  version: 0.2.0
+servers:
+  - url: 'http://localhost:8080'
+    description: Local development server
+tags:
+  - name: Chat
+    description: Chat completion operations
+
+paths:
+  /chat/completions:
+    post:
+      tags:
+        - Chat
+      summary: Create chat completion
+      description: |
+        Creates a model response for the given chat conversation.
+        The request is proxied through the Blackbox AI provider. Anonymous calls use
+        the VS Code proxy route where available; entitlement-gated models require a
+        Blackbox customer token or API key.
+      operationId: createChatCompletion
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChatCompletionRequest'
+            example:
+              model: "gpt-4o-mini"
+              messages:
+                - role: "system"
+                  content: "You are a helpful assistant."
+                - role: "user"
+                  content: "What is the capital of France?"
+              temperature: 0.7
+              max_tokens: 150
+              stream: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+              example:
+                id: "chatcmpl-123"
+                object: "chat.completion"
+                created: 1677652288
+                model: "gpt-4o-mini"
+                choices:
+                  - index: 0
+                    message:
+                      role: "assistant"
+                      content: "The capital of France is Paris."
+                    finish_reason: "stop"
+                usage:
+                  prompt_tokens: 18
+                  completion_tokens: 8
+                  total_tokens: 26
+                _routed_via:
+                  platform: "blackbox"
+                  model: "gpt-4o-mini"
+            text/event-stream:
+              schema:
+                type: string
+                description: A stream of Server-Sent Events containing ChatCompletionChunk objects.
+        '401':
+          description: Unauthorized (No API key passed in or invalid token)
+          content:
+            application/json:
+              example:
+                error:
+                  message: "Authentication Error, No api key passed in."
+                  status: 401
+        '429':
+          description: Too Many Requests (upstream rate limit)
+        '500':
+          description: Internal Server Error
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter your Blackbox API Key here to authenticate requests.
+
+  schemas:
+    CreateChatCompletionRequest:
+      type: object
+      required:
+        - messages
+      properties:
+        model:
+          type: string
+          default: "gpt-4o-mini"
+          description: |
+            ID of the model to use.
+
+            Anonymous/free proxy models verified by this wrapper:
+            - gpt-4o-mini (Default)
+            - custom/blackbox-base-2
+            - minimax-m2 (aliased to openrouter/minimax-m2-thinking)
+            - minimax-m2.7 (aliased to openrouter/minimax-m2-thinking)
+
+            Token/entitlement-dependent models:
+            - moonshotai/kimi-k2.6 (also accepted as kimi or kimi-k2.6, but requires Authorization: Bearer, BLACKBOX_API_KEY, BLACKBOX_CUSTOMER_ID, or a saved Blackbox apiKey/fallback_apiKey/customerId)
+            - custom/blackbox-pro
+            - deepseek-v3
+            - deepseek-r1
+            - gemini-2.5-pro
+            - z-ai/glm-4.7
+            - claude-3-5-sonnet-20241022
+            - claude-3-7-sonnet-20250219
+            - o1
+            - o3-mini
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          description: A list of messages comprising the conversation so far.
+        temperature:
+          type: number
+          nullable: true
+          default: 1
+          minimum: 0
+          maximum: 2
+          description: What sampling temperature to use, between 0 and 2.
+        max_tokens:
+          type: integer
+          nullable: true
+          description: The maximum number of tokens to generate in the chat completion.
+        top_p:
+          type: number
+          nullable: true
+          default: 1
+          minimum: 0
+          maximum: 1
+          description: An alternative to sampling with temperature, called nucleus sampling.
+        stream:
+          type: boolean
+          nullable: true
+          default: false
+          description: If set, partial message deltas will be sent, like in ChatGPT.
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatToolDefinition'
+          description: A list of tools the model may call.
+        tool_choice:
+          type: object
+          description: Controls which (if any) tool is called by the model.
+          properties:
+            type:
+              type: string
+              enum: [none, auto, function]
+            function:
+              type: object
+              properties:
+                name:
+                  type: string
+        parallel_tool_calls:
+          type: boolean
+          description: Whether to enable parallel function calling during tool use.
+
+    ChatMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+          description: The role of the messages author.
+        content:
+          type: string
+          nullable: true
+          description: The contents of the message. (Can be null if tool_calls are provided)
+        name:
+          type: string
+          description: An optional name for the participant.
+        tool_calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCall'
+          description: Tool calls generated by the model.
+        tool_call_id:
+          type: string
+          description: Tool call that this message is responding to (required for role=tool).
+
+    ToolCall:
+      type: object
+      required:
+        - id
+        - type
+        - function
+      properties:
+        id:
+          type: string
+          description: The ID of the tool call.
+        type:
+          type: string
+          enum: [function]
+        function:
+          type: object
+          required:
+            - name
+            - arguments
+          properties:
+            name:
+              type: string
+              description: The name of the function to call.
+            arguments:
+              type: string
+              description: The arguments to call the function with, as generated by the model in JSON format.
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          default: chat.completion
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: '#/components/schemas/ChatMessage'
+              finish_reason:
+                type: string
+                enum: [stop, length, tool_calls, content_filter, null]
+                nullable: true
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+        _routed_via:
+          type: object
+          description: Custom FreeLLMAPI metadata showing the routing path.
+          properties:
+            platform:
+              type: string
+              default: blackbox
+            model:
+              type: string
+
+    ChatCompletionChunk:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          default: chat.completion.chunk
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              delta:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: string
+                  tool_calls:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ToolCall'
+              finish_reason:
+                type: string
+                nullable: true
+
+    ChatToolDefinition:
+      type: object
+      required:
+        - type
+        - function
+      properties:
+        type:
+          type: string
+          enum: [function]
+        function:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+              description: The name of the function to be called.
+            description:
+              type: string
+              description: A description of what the function does, used by the model to choose when and how to call the function.
+            parameters:
+              type: object
+              description: The parameters the functions accepts, described as a JSON Schema object.
