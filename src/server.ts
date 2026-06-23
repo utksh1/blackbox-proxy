@@ -63,15 +63,38 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
       parallel_tool_calls
     } = req.body;
 
-    // Translate tools to standard OpenAI format if they are missing the 'function' wrapper
+    // Translate tools to standard OpenAI format and filter out unsupported types
     if (tools && Array.isArray(tools)) {
-      tools = tools.map((t: any) => {
-        if (t.name && !t.function) {
-          // Anthropic/Custom format often just passes the tool directly
-          return { type: 'function', function: t };
+      const validTools = [];
+      for (const t of tools) {
+        if (t.name && !t.function && !t.type) {
+          validTools.push({ type: 'function', function: t });
+        } else if (t.type === 'function' || t.type === 'custom') {
+          validTools.push(t);
+        } else if (t.type && t.function) {
+          t.type = 'function';
+          validTools.push(t);
+        } else {
+          const inner = t[t.type] || {};
+          if (inner.name || t.name) {
+             validTools.push({
+               type: 'function',
+               function: {
+                 name: inner.name || t.name || t.type,
+                 description: inner.description || t.description || `Tool ${t.type}`,
+                 parameters: inner.parameters || t.parameters || { type: "object", properties: {} }
+               }
+             });
+          }
         }
-        return t;
-      });
+      }
+      tools = validTools.length > 0 ? validTools : undefined;
+    }
+
+    if (tool_choice && typeof tool_choice === 'object') {
+      if (tool_choice.type && tool_choice.type !== 'function' && tool_choice.type !== 'custom') {
+        tool_choice = 'auto';
+      }
     }
 
     let messages = req.body.messages;
