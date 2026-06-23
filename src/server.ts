@@ -110,6 +110,117 @@ app.post('/chat/completions', async (req, res) => {
   }
 });
 
+// List Models Endpoint
+app.get('/models', (req, res) => {
+  const models = [
+    'gpt-4o-mini',
+    'custom/blackbox-base-2',
+    'minimax-m2',
+    'minimax-m2.7',
+    'moonshotai/kimi-k2.6',
+    'custom/blackbox-pro',
+    'deepseek-v3',
+    'deepseek-r1',
+    'gemini-2.5-pro',
+    'z-ai/glm-4.7',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-7-sonnet-20250219',
+    'o1',
+    'o3-mini'
+  ];
+
+  res.json({
+    object: 'list',
+    data: models.map((model) => ({
+      id: model,
+      object: 'model',
+      created: 1700000000,
+      owned_by: 'blackbox'
+    }))
+  });
+});
+
+// Anthropic Compatible Messages Endpoint
+app.post('/v1/messages', async (req, res) => {
+  try {
+    let authHeaderRaw = req.headers['x-api-key'] || req.headers.authorization || '';
+    let authHeader = Array.isArray(authHeaderRaw) ? authHeaderRaw[0] : authHeaderRaw;
+    
+    const proxySecret = process.env.PROXY_API_KEY || 'xyz';
+    if (proxySecret) {
+      let incomingKey = authHeader;
+      if (incomingKey.startsWith('Bearer ')) incomingKey = incomingKey.replace('Bearer ', '');
+      incomingKey = incomingKey.trim();
+      
+      if (incomingKey !== proxySecret) {
+        return res.status(401).json({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' }});
+      }
+      authHeader = '';
+    }
+    
+    const {
+      model,
+      messages,
+      system,
+      max_tokens,
+      temperature,
+      stream = false
+    } = req.body;
+
+    if (stream) {
+      return res.status(400).json({ error: { message: 'Streaming is not yet supported for Anthropic endpoints.' } });
+    }
+
+    // Convert Anthropic messages to OpenAI format
+    const openAIMessages: any[] = [];
+    if (system) {
+      openAIMessages.push({ role: 'system', content: system });
+    }
+    for (const msg of messages) {
+      // Simplistic conversion for now
+      let content = '';
+      if (typeof msg.content === 'string') {
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        content = msg.content.map((c: any) => c.text || '').join('');
+      }
+      openAIMessages.push({ role: msg.role as any, content });
+    }
+
+    const options: CompletionOptions = {
+      temperature,
+      max_tokens,
+    };
+
+    const response = await provider.chatCompletion(authHeader, openAIMessages as any, model, options);
+
+    // Convert OpenAI response back to Anthropic format
+    const contentText = response.choices[0]?.message?.content || '';
+    res.json({
+      id: response.id || `msg_${Date.now()}`,
+      type: 'message',
+      role: 'assistant',
+      model: response.model || model,
+      content: [{ type: 'text', text: contentText }],
+      stop_reason: 'end_turn',
+      usage: {
+        input_tokens: response.usage?.prompt_tokens || 0,
+        output_tokens: response.usage?.completion_tokens || 0
+      }
+    });
+
+  } catch (err: any) {
+    const status = err.status || 500;
+    res.status(status).json({
+      type: 'error',
+      error: {
+        type: 'api_error',
+        message: err.message || 'Internal Server Error'
+      }
+    });
+  }
+});
+
 app.listen(port, () => {
   console.log(`🚀 Blackbox Provider running at http://localhost:${port}`);
   console.log(`📚 Swagger documentation available at http://localhost:${port}/docs`);
