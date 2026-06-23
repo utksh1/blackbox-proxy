@@ -12,7 +12,7 @@ function randomId(len = 24): string {
 
 function isPlaceholderKey(apiKey: string | undefined): boolean {
   const trimmed = apiKey?.trim();
-  return !trimmed || trimmed === 'xxx' || trimmed === 'minimax-no-key-required';
+  return !trimmed || trimmed === 'xxx' || trimmed === 'minimax-no-key-required' || trimmed === 'xyz';
 }
 
 function getEnvApiKey(): string | undefined {
