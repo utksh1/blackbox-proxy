@@ -63,29 +63,29 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
       parallel_tool_calls
     } = req.body;
 
-    // Translate tools to standard OpenAI format and filter out unsupported types
+    // Translate tools to standard OpenAI format
     if (tools && Array.isArray(tools)) {
       const validTools = [];
       for (const t of tools) {
-        if (t.name && !t.function && !t.type) {
-          validTools.push({ type: 'function', function: t });
-        } else if (t.type === 'function' || t.type === 'custom') {
+        // If it's already perfectly formatted
+        if (t.type === 'function' && t.function && t.function.name) {
           validTools.push(t);
-        } else if (t.type && t.function) {
-          t.type = 'function';
-          validTools.push(t);
-        } else {
-          const inner = t[t.type] || {};
-          if (inner.name || t.name) {
-             validTools.push({
-               type: 'function',
-               function: {
-                 name: inner.name || t.name || t.type,
-                 description: inner.description || t.description || `Tool ${t.type}`,
-                 parameters: inner.parameters || t.parameters || { type: "object", properties: {} }
-               }
-             });
-          }
+          continue;
+        }
+        
+        // Otherwise, extract the core properties and force the wrapper
+        const inner = t.function || t[t.type] || t;
+        const name = inner.name || t.name || t.type;
+        
+        if (name) {
+          validTools.push({
+            type: 'function',
+            function: {
+              name: name,
+              description: inner.description || t.description || '',
+              parameters: inner.parameters || t.parameters || { type: "object", properties: {} }
+            }
+          });
         }
       }
       tools = validTools.length > 0 ? validTools : undefined;
@@ -141,6 +141,9 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
       tool_choice,
       parallel_tool_calls,
     };
+
+    console.log("FINAL TOOLS ARRAY SENT TO BLACKBOX:", JSON.stringify(tools, null, 2));
+    console.log("FINAL TOOL CHOICE:", JSON.stringify(tool_choice, null, 2));
 
     if (stream) {
       const generator = provider.streamChatCompletion(apiKey, messages, model, options);
