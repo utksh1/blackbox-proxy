@@ -54,7 +54,6 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
     
     const {
       model = 'gpt-4o-mini',
-      messages,
       temperature,
       max_tokens,
       top_p,
@@ -63,6 +62,35 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
       tool_choice,
       parallel_tool_calls
     } = req.body;
+
+    let messages = req.body.messages;
+
+    // Translation layer for Codex 'responses' wire API
+    if (!messages && req.body.input && Array.isArray(req.body.input)) {
+      messages = [];
+      if (req.body.instructions) {
+        messages.push({ role: 'system', content: req.body.instructions });
+      }
+      for (const item of req.body.input) {
+        if (item.type === 'message') {
+          let role = item.role;
+          if (role === 'developer') role = 'system';
+          
+          let textContent = '';
+          if (Array.isArray(item.content)) {
+            for (const block of item.content) {
+              if (block.type === 'input_text' || block.type === 'text') {
+                textContent += block.text || '';
+              }
+            }
+          } else if (typeof item.content === 'string') {
+            textContent = item.content;
+          }
+          messages.push({ role, content: textContent });
+        }
+      }
+      req.body.messages = messages;
+    }
 
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ 
