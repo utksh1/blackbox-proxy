@@ -69,7 +69,7 @@ export class BlackboxProvider extends BaseProvider {
     const isKimi = isKimiModel(modelId);
     
     if (isMinimax) {
-      body.model = 'openrouter/minimax-m2-thinking';
+      body.model = 'minimax-m2';
     } else {
       body.model = modelId;
     }

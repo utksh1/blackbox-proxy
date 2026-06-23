@@ -146,22 +146,34 @@ app.post(['/chat/completions', '/responses'], async (req, res) => {
     console.log("FINAL TOOL CHOICE:", JSON.stringify(tool_choice, null, 2));
 
     if (stream) {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.flushHeaders();
-
       try {
         const generator = provider.streamChatCompletion(apiKey, messages, model, options);
+        
+        // Wait for the first chunk before sending headers. 
+        // This ensures API errors are returned as HTTP 500 status codes!
+        const first = await generator.next();
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        if (!first.done) {
+          res.write(`data: ${JSON.stringify(first.value)}\n\n`);
+        }
+
         for await (const chunk of generator) {
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
         }
-      } catch (error: any) {
-        console.error('Streaming error:', error);
-        res.write(`data: ${JSON.stringify({ error: { message: error.message || 'Internal server error' } })}\n\n`);
-      } finally {
         res.write('data: [DONE]\n\n');
         res.end();
+      } catch (error: any) {
+        console.error('Streaming error:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message || 'Internal server error' });
+        } else {
+          res.write(`data: ${JSON.stringify({ error: { message: error.message || 'Internal server error' } })}\n\n`);
+          res.end();
+        }
       }
       return;
     } else {
