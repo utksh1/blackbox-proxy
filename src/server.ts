@@ -15,7 +15,8 @@ const app = express();
 const port = process.env.PORT || 8080;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // Load OpenAPI spec for Swagger
 const openapiPath = path.join(__dirname, '../openapi.yaml');
@@ -27,7 +28,7 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 const provider = new BlackboxProvider();
 
 // OpenAI Compatible Chat Completions Endpoint
-app.post('/chat/completions', async (req, res) => {
+app.post(['/chat/completions', '/responses'], async (req, res) => {
   try {
     let authHeader = req.headers.authorization || '';
     
@@ -113,6 +114,9 @@ app.post('/chat/completions', async (req, res) => {
 // List Models Endpoint
 app.get('/models', (req, res) => {
   const models = [
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.4-mini',
     'gpt-4o-mini',
     'custom/blackbox-base-2',
     'minimax-m2',

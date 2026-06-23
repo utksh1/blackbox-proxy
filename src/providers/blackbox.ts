@@ -27,6 +27,15 @@ function normalizeModelId(modelId: string): string {
   if (lower === 'kimi-k2.6' || lower === 'kimi') {
     return 'moonshotai/kimi-k2.6';
   }
+  if (lower === 'gpt-5.5' || lower === '5.5') {
+    return 'minimax-m2.7';
+  }
+  if (lower === 'gpt-5.4' || lower === '5.4') {
+    return 'custom/blackbox-base-2';
+  }
+  if (lower === 'gpt-5.4-mini' || lower === '5.4 mini' || lower === '5.4-mini') {
+    return 'gpt-4o-mini';
+  }
   return modelId;
 }
 
