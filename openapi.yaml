@@ -17,6 +17,54 @@ tags:
     description: Chat completion operations
 
 paths:
+  /models:
+    get:
+      tags:
+        - Models
+      summary: List available models
+      description: Returns a list of supported models in standard OpenAI format.
+      operationId: listModels
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example:
+                object: "list"
+                data:
+                  - id: "gpt-4o-mini"
+                    object: "model"
+                    created: 1700000000
+                    owned_by: "blackbox"
+
+  /v1/messages:
+    post:
+      tags:
+        - Chat
+      summary: Create Anthropic-compatible chat message
+      description: |
+        Translates Anthropic Messages API format into OpenAI format, proxies it through Blackbox, and translates the response back into Anthropic format.
+      operationId: createAnthropicMessage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              model: "claude-3-5-sonnet-20241022"
+              max_tokens: 1000
+              messages:
+                - role: "user"
+                  content: "Hello"
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request (e.g. streaming requested)
+        '401':
+          description: Unauthorized
+
   /chat/completions:
     post:
       tags:
