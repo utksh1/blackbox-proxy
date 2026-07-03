@@ -6,8 +6,12 @@ info:
     A blazing-fast, lightweight reverse proxy written in Rust that provides a standard 
     OpenAI-compatible `/chat/completions` API interface to the internal Blackbox AI backend.
 servers:
-  - url: /
-    description: Current Server
+  - url: 'https://bapi.utksh.in'
+    description: Primary Custom Domain
+  - url: 'https://blackbox-proxy-z0hn.onrender.com'
+    description: Render Default Domain
+  - url: 'http://localhost:8080'
+    description: Local development server
 components:
   securitySchemes:
     bearerAuth:
