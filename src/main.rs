@@ -52,6 +52,7 @@ async fn main() {
     let app = Router::new()
         .route("/chat/completions", post(handle_chat_completions))
         .route("/responses", post(handle_chat_completions))
+        .route("/models", get(handle_models))
         .route("/docs", get(swagger_ui))
         .route("/docs/", get(swagger_ui))
         .route("/openapi.yaml", get(openapi_yaml))
@@ -151,6 +152,39 @@ async fn handle_chat_completions(
             ).into_response()
         }
     }
+}
+
+async fn handle_models() -> impl IntoResponse {
+    let models = serde_json::json!({
+        "object": "list",
+        "data": [
+            {
+                "id": "minimax-m2.7",
+                "object": "model",
+                "owned_by": "minimax",
+                "free": true
+            },
+            {
+                "id": "kimi-k2.6",
+                "object": "model",
+                "owned_by": "moonshot",
+                "free": true
+            },
+            {
+                "id": "custom/blackbox-base-2",
+                "object": "model",
+                "owned_by": "blackbox",
+                "free": true
+            },
+            {
+                "id": "gpt-4o-mini",
+                "object": "model",
+                "owned_by": "openai",
+                "free": true
+            }
+        ]
+    });
+    Json(models)
 }
 
 async fn swagger_ui() -> Html<&'static str> {
