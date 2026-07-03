@@ -6,8 +6,8 @@ info:
     A blazing-fast, lightweight reverse proxy written in Rust that provides a standard 
     OpenAI-compatible `/chat/completions` API interface to the internal Blackbox AI backend.
 servers:
-  - url: http://localhost:8080
-    description: Local server
+  - url: /
+    description: Current Server
 components:
   securitySchemes:
     bearerAuth:
