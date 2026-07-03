@@ -21,7 +21,7 @@ components:
 security:
   - bearerAuth: []
 paths:
-  /chat/completions:
+  /v1/chat/completions:
     post:
       summary: Create chat completion
       description: Send a chat completion request to the Blackbox proxy.
@@ -76,7 +76,7 @@ paths:
           description: Chat completion response
         '401':
           description: Unauthorized - Invalid PROXY_API_KEY
-  /models:
+  /v1/models:
     get:
       summary: List available free models
       description: Returns a list of all free models supported by this proxy. Paid models are intentionally omitted.
