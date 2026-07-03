@@ -15,15 +15,18 @@ use tower_http::trace::TraceLayer;
 // Removed mimalloc to simplify Docker builds on low-RAM instances
 
 mod blackbox;
+mod kilo;
 mod models;
 mod utils;
 mod vscode;
 
 use blackbox::BlackboxProvider;
+use kilo::KiloProvider;
 use models::ChatCompletionRequest;
 
 struct AppState {
     provider: BlackboxProvider,
+    kilo_provider: KiloProvider,
     proxy_api_key: String,
 }
 
@@ -44,7 +47,8 @@ async fn main() {
         .unwrap();
 
     let state = Arc::new(AppState {
-        provider: BlackboxProvider::new(client),
+        provider: BlackboxProvider::new(client.clone()),
+        kilo_provider: KiloProvider::new(client),
         proxy_api_key: env::var("PROXY_API_KEY").unwrap_or_else(|_| "xyz".to_string()),
     });
 
@@ -130,6 +134,27 @@ async fn handle_chat_completions(
         body.tools = if valid_tools.is_empty() { None } else { Some(valid_tools) };
     }
 
+    if kilo::KiloProvider::is_kilo_model(&body.model) {
+        match state.kilo_provider.post_chat(body).await {
+            Ok(res) => {
+                let mut response_builder = axum::response::Response::builder()
+                    .status(res.status());
+                for (k, v) in res.headers().iter() {
+                    response_builder = response_builder.header(k, v);
+                }
+                let stream = res.bytes_stream();
+                let body = axum::body::Body::from_stream(stream);
+                return response_builder.body(body).unwrap();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e })),
+                ).into_response();
+            }
+        }
+    }
+
     match state.provider.post_chat(api_key, body).await {
         Ok(res) => {
             let mut response_builder = axum::response::Response::builder()
@@ -178,6 +203,48 @@ async fn handle_models() -> impl IntoResponse {
                 "id": "gpt-4o-mini",
                 "object": "model",
                 "owned_by": "openai",
+                "free": true
+            },
+            {
+                "id": "nvidia/nemotron-3-super-120b-a12b:free",
+                "object": "model",
+                "owned_by": "nvidia",
+                "free": true
+            },
+            {
+                "id": "openrouter/free",
+                "object": "model",
+                "owned_by": "openrouter",
+                "free": true
+            },
+            {
+                "id": "stepfun/step-3.5-flash:free",
+                "object": "model",
+                "owned_by": "stepfun",
+                "free": true
+            },
+            {
+                "id": "poolside/laguna-xs.2:free",
+                "object": "model",
+                "owned_by": "poolside",
+                "free": true
+            },
+            {
+                "id": "kilo-auto/free",
+                "object": "model",
+                "owned_by": "kilo",
+                "free": true
+            },
+            {
+                "id": "poolside/laguna-m.1:free",
+                "object": "model",
+                "owned_by": "poolside",
+                "free": true
+            },
+            {
+                "id": "baidu/cobuddy:free",
+                "object": "model",
+                "owned_by": "baidu",
                 "free": true
             }
         ]
