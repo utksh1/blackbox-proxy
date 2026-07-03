@@ -8,7 +8,7 @@ axum = "0.8.9"
 dirs = "6.0.0"
 lazy_static = "1.5.0"
 rand = "0.10.2"
-reqwest = { version = "0.13.4", features = ["json", "stream"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "native-tls", "charset"] }
 rusqlite = "0.40.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
@@ -16,7 +16,6 @@ tokio = { version = "1.52.3", features = ["full"] }
 tower-http = { version = "0.7.0", features = ["cors", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
-mimalloc = "0.1.43"
 
 [profile.release]
 opt-level = 3

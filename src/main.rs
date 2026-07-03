@@ -12,8 +12,7 @@ use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+// Removed mimalloc to simplify Docker builds on low-RAM instances
 
 mod blackbox;
 mod models;
