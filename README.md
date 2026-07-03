@@ -32,6 +32,20 @@ This proxy allows you to use top-tier models (like **Minimax-m2.7** and **Kimi-k
 
 *(Note: You can override the default proxy key by setting the `PROXY_API_KEY` environment variable).*
 
+## Deploying to Render.com (Cloud)
+
+You can easily host this proxy on Render for free or on a cheap tier to expose it to the internet:
+
+1. Push this repository to GitHub.
+2. Go to [Render](https://render.com/) -> **New Web Service**.
+3. Connect your GitHub repository.
+4. Render will automatically detect the `Dockerfile` and build/deploy the proxy!
+
+**Important Cloud Limitation:**
+Because Render runs in the cloud, it **cannot** access your laptop's local VS Code SQLite storage to extract your token automatically.
+- **Minimax M2.7**: Works flawlessly on Render out-of-the-box because it uses a hardcoded bypass (`minimax-no-key-required`).
+- **Kimi K2.6**: Will fail on Render unless you manually set your token. To use Kimi, go to your Render Dashboard -> Environment Variables and set `BLACKBOX_CUSTOMER_ID` to your actual token (which you can grab from your local machine's VS Code network logs or storage).
+
 ---
 
 ## Deep Dive Reverse Engineering: Blackbox Local Autonomous Agent (ACP)

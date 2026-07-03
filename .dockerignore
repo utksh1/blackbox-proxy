@@ -1,0 +1,6 @@
+target/
+.git/
+old-ts/
+node_modules/
+**/*.md
+**/*.log
