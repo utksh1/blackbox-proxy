@@ -50,8 +50,10 @@ async fn main() {
 
     let app = Router::new()
         .route("/chat/completions", post(handle_chat_completions))
+        .route("/v1/chat/completions", post(handle_chat_completions))
         .route("/responses", post(handle_chat_completions))
         .route("/models", get(handle_models))
+        .route("/v1/models", get(handle_models))
         .route("/docs", get(swagger_ui))
         .route("/docs/", get(swagger_ui))
         .route("/openapi.yaml", get(openapi_yaml))
