@@ -38,7 +38,7 @@ paths:
                 model:
                   type: string
                   example: minimax-m2.7
-                  description: The model to route to (e.g. `minimax-m2.7`, `kimi-k2.6`, `nvidia/nemotron-3-super-120b-a12b:free`, `openrouter/free`).
+                  description: The model to route to (e.g. `minimax-m2.7`, `kimi-k2.6`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `kilo-auto/free`).
                 messages:
                   type: array
                   items:
@@ -121,11 +121,39 @@ paths:
                     object: model
                     owned_by: blackbox
                     free: true
-                  - id: nvidia/nemotron-3-super-120b-a12b:free
+                  - id: kilo-auto/free
                     object: model
-                    owned_by: nvidia
+                    owned_by: kilo
                     free: true
                   - id: openrouter/free
                     object: model
                     owned_by: openrouter
+                    free: true
+                  - id: poolside/laguna-m.1:free
+                    object: model
+                    owned_by: poolside
+                    free: true
+                  - id: stepfun/step-3.7-flash:free
+                    object: model
+                    owned_by: stepfun
+                    free: true
+                  - id: nvidia/nemotron-3-ultra-550b-a55b:free
+                    object: model
+                    owned_by: nvidia
+                    free: true
+                  - id: nex/nex-n2-pro:free
+                    object: model
+                    owned_by: nex
+                    free: true
+                  - id: inclusionai/ring-2.6-1t:free
+                    object: model
+                    owned_by: inclusionai
+                    free: true
+                  - id: inclusionai/ling-2.6-flash:free
+                    object: model
+                    owned_by: inclusionai
+                    free: true
+                  - id: google/gemma-4-26b-a4b:free
+                    object: model
+                    owned_by: google
                     free: true

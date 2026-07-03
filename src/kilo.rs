@@ -8,11 +8,11 @@ const KILO_GATEWAY_URL: &str = "https://api.kilo.ai/api/gateway/chat/completions
 const DEFAULT_USER_AGENT: &str = "Kilo CLI";
 
 const FAILOVER_MODELS: &[&str] = &[
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "openrouter/free",
-    "stepfun/step-3.5-flash:free",
-    "poolside/laguna-xs.2:free",
     "kilo-auto/free",
+    "openrouter/free",
+    "poolside/laguna-m.1:free",
+    "stepfun/step-3.7-flash:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
 ];
 
 pub struct KiloProvider {
@@ -27,13 +27,15 @@ impl KiloProvider {
     pub fn is_kilo_model(model_id: &str) -> bool {
         let lower = model_id.to_lowercase();
         // Return true if it matches any known Kilo free models
-        lower == "nvidia/nemotron-3-super-120b-a12b:free"
+        lower == "kilo-auto/free"
             || lower == "openrouter/free"
-            || lower == "stepfun/step-3.5-flash:free"
-            || lower == "poolside/laguna-xs.2:free"
-            || lower == "kilo-auto/free"
             || lower == "poolside/laguna-m.1:free"
-            || lower == "baidu/cobuddy:free"
+            || lower == "stepfun/step-3.7-flash:free"
+            || lower == "nvidia/nemotron-3-ultra-550b-a55b:free"
+            || lower == "nex/nex-n2-pro:free"
+            || lower == "inclusionai/ring-2.6-1t:free"
+            || lower == "inclusionai/ling-2.6-flash:free"
+            || lower == "google/gemma-4-26b-a4b:free"
     }
 
     pub async fn post_chat(

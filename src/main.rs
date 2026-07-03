@@ -206,9 +206,9 @@ async fn handle_models() -> impl IntoResponse {
                 "free": true
             },
             {
-                "id": "nvidia/nemotron-3-super-120b-a12b:free",
+                "id": "kilo-auto/free",
                 "object": "model",
-                "owned_by": "nvidia",
+                "owned_by": "kilo",
                 "free": true
             },
             {
@@ -218,33 +218,45 @@ async fn handle_models() -> impl IntoResponse {
                 "free": true
             },
             {
-                "id": "stepfun/step-3.5-flash:free",
-                "object": "model",
-                "owned_by": "stepfun",
-                "free": true
-            },
-            {
-                "id": "poolside/laguna-xs.2:free",
-                "object": "model",
-                "owned_by": "poolside",
-                "free": true
-            },
-            {
-                "id": "kilo-auto/free",
-                "object": "model",
-                "owned_by": "kilo",
-                "free": true
-            },
-            {
                 "id": "poolside/laguna-m.1:free",
                 "object": "model",
                 "owned_by": "poolside",
                 "free": true
             },
             {
-                "id": "baidu/cobuddy:free",
+                "id": "stepfun/step-3.7-flash:free",
                 "object": "model",
-                "owned_by": "baidu",
+                "owned_by": "stepfun",
+                "free": true
+            },
+            {
+                "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+                "object": "model",
+                "owned_by": "nvidia",
+                "free": true
+            },
+            {
+                "id": "nex/nex-n2-pro:free",
+                "object": "model",
+                "owned_by": "nex",
+                "free": true
+            },
+            {
+                "id": "inclusionai/ring-2.6-1t:free",
+                "object": "model",
+                "owned_by": "inclusionai",
+                "free": true
+            },
+            {
+                "id": "inclusionai/ling-2.6-flash:free",
+                "object": "model",
+                "owned_by": "inclusionai",
+                "free": true
+            },
+            {
+                "id": "google/gemma-4-26b-a4b:free",
+                "object": "model",
+                "owned_by": "google",
                 "free": true
             }
         ]
