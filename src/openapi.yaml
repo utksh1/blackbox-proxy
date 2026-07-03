@@ -61,6 +61,12 @@ paths:
                         default: function
                       function:
                         type: object
+            example:
+              model: minimax-m2.7
+              messages:
+                - role: user
+                  content: Hello, tell me a quick joke about programmers.
+              stream: false
       responses:
         '200':
           description: Chat completion response
