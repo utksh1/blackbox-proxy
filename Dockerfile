@@ -1,5 +1,5 @@
 # Build Stage
-FROM rust:1.80-slim as builder
+FROM rust:slim-bookworm as builder
 
 # Install dependencies required for compilation (e.g. for rusqlite / libsqlite3 / aws-lc-rs)
 RUN apt-get update && apt-get install -y pkg-config libssl-dev build-essential sqlite3 libsqlite3-dev cmake clang && rm -rf /var/lib/apt/lists/*
