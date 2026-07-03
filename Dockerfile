@@ -10,7 +10,7 @@ WORKDIR /usr/src/blackbox-proxy
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && \
     echo "fn main() {println!(\"if you see this, the build failed\")}" > src/main.rs && \
-    cargo build --release && \
+    cargo build --release -j 1 && \
     rm -rf src
 
 # Now copy the actual source code
@@ -19,7 +19,7 @@ COPY src ./src
 RUN touch src/main.rs
 
 # Build the real application
-RUN cargo build --release
+RUN cargo build --release -j 1
 
 # Runtime Stage
 FROM debian:bookworm-slim
