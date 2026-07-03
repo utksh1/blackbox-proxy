@@ -26,9 +26,9 @@ pub struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Value>>,
+    pub tools: Option<Vec<ChatToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<Value>,
+    pub tool_choice: Option<ChatToolChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
 }
@@ -90,4 +90,38 @@ pub struct ChunkDelta {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum ChatToolChoice {
+    String(String),
+    Object {
+        r#type: String,
+        function: FunctionName,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FunctionName {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum ChatToolDefinition {
+    Strict {
+        r#type: String,
+        function: FunctionDefinition,
+    },
+    Loose(Value),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FunctionDefinition {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Value>,
 }

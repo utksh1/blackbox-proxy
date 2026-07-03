@@ -16,7 +16,7 @@ lazy_static::lazy_static! {
     static ref CACHED_TOKENS: Mutex<Option<(BlackboxTokens, Instant)>> = Mutex::new(None);
 }
 
-const CACHE_TTL: Duration = Duration::from_secs(60);
+const CACHE_TTL: Duration = Duration::from_secs(300);
 const BLACKBOX_STORAGE_KEYS: &[&str] = &["Blackboxapp.blackboxagent", "Blackboxapp.blackbox"];
 
 fn get_vscode_state_db_paths() -> Vec<PathBuf> {

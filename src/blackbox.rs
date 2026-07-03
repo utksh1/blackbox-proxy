@@ -17,10 +17,8 @@ pub struct BlackboxProvider {
 }
 
 impl BlackboxProvider {
-    pub fn new() -> Self {
-        Self {
-            client: Client::new(),
-        }
+    pub fn new(client: Client) -> Self {
+        Self { client }
     }
 
     fn is_placeholder_key(key: Option<&String>) -> bool {
@@ -29,8 +27,7 @@ impl BlackboxProvider {
                 let trimmed = k.trim();
                 trimmed.is_empty() 
                     || trimmed == "xxx" 
-                    || trimmed == "minimax-no-key-required" 
-                    || trimmed == "xyz"
+                    || trimmed == "minimax-no-key-required"
             },
             None => true,
         }

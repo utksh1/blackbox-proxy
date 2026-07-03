@@ -53,6 +53,7 @@ async fn main() {
         .route("/chat/completions", post(handle_chat_completions))
         .route("/responses", post(handle_chat_completions))
         .route("/docs", get(swagger_ui))
+        .route("/docs/", get(swagger_ui))
         .route("/openapi.yaml", get(openapi_yaml))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
