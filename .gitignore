@@ -5,3 +5,8 @@ dist
 globalState.json
 blackboxagent.json
 blackbox.json
+
+
+# Added by cargo
+
+/target
