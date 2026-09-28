@@ -22,30 +22,15 @@ pub const KILO_MODELS: &[&str] = &[
     "inclusionai/ring-2.6-1t:free",
     "inclusionai/ling-2.6-flash:free",
     "google/gemma-4-26b-a4b:free",
-    // Additional live free-tier models (verified against the Kilo gateway
-    // model list); used as primary replacements for dead Blackbox routes
-    // and available to failover.
-    "qwen/qwen3.8-27b:free",
-    "poolside/laguna-xs-2.1:free",
-    "poolside/laguna-s-2.1:free",
-    "liquid/lfm-2.5-2.6b:free",
 ];
 
 pub struct KiloProvider {
     client: Client,
-    /// Gateway endpoint; overridable in tests via `new_at`.
-    base_url: String,
 }
 
 impl KiloProvider {
     pub fn new(client: Client) -> Self {
-        Self { client, base_url: KILO_GATEWAY_URL.to_string() }
-    }
-
-    /// Construct with a custom gateway URL (used by integration tests to
-    /// point the provider at a local mock server).
-    pub fn new_at(client: Client, base_url: impl Into<String>) -> Self {
-        Self { client, base_url: base_url.into() }
+        Self { client }
     }
 
     pub fn is_kilo_model(model_id: &str) -> bool {
@@ -73,7 +58,7 @@ impl KiloProvider {
             
             info!("Attempt {}: Using {} (MachineID: {})", attempt + 1, model, machine_id);
             
-            let req = self.client.post(&self.base_url)
+            let req = self.client.post(KILO_GATEWAY_URL)
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::ACCEPT, "application/json")
                 .header("X-KILOCODE-MACHINEID", &machine_id)
@@ -136,6 +121,6 @@ mod tests {
                 "routing model {m} missing from failover pool"
             );
         }
-        assert_eq!(KILO_MODELS.len(), 13);
+        assert_eq!(KILO_MODELS.len(), 9);
     }
 }
