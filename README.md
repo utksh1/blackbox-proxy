@@ -90,3 +90,20 @@ If it does not find a key, the agent fails to start. **However, Kimi still works
 If you open the Blackbox extension sidebar in VS Code and perform any action (like sending a normal chat message), the extension silently communicates with the Blackbox servers, generates a free-tier session token, and saves it to your IDE's local SQLite storage under the `"blackbox"` key. 
 
 **Our proxy automatically reads this token from your SQLite database** and injects it into your API requests. Kimi uses this saved token to authorize itself and successfully execute local tools.
+
+
+## Fallback routing for dead Blackbox upstreams (2026-09)
+
+The Blackbox free/pro Cloud Run endpoints (`oi-vscode-server*.run.app`) are offline
+(HTTP 404 for every path). The proxy now transparently re-routes the legacy model
+names to verified-live equivalents on the Kilo gateway free tier:
+
+| Requested model          | Live fallback (tried first, then KILO_MODELS failover pool)      |
+|--------------------------|-------------------------------------------------------------------|
+| `minimax-m2.7` (+aliases)| `stepfun/step-3.7-flash:free`                                     |
+| `kimi-k2.6` (+aliases)   | `qwen/qwen3.8-27b:free`                                           |
+| `gpt-4o-mini` (+aliases) | `poolside/laguna-xs-2.1:free`, `liquid/lfm-2.5-2.6b:free`         |
+| `custom/blackbox-base-2` | `poolside/laguna-s-2.1:free`, `kilo-auto/free`                    |
+
+If a client supplies its own valid Blackbox `sk-` API key, the original
+`api.blackbox.ai/v1` route is still attempted first for non-alias handling.

@@ -14,6 +14,7 @@ use tower_http::trace::TraceLayer;
 // Removed mimalloc to simplify Docker builds on low-RAM instances
 
 pub mod blackbox;
+pub mod fallback;
 pub mod kilo;
 pub mod models;
 pub mod utils;
@@ -232,6 +233,14 @@ async fn handle_chat_completions(
             Ok(res) => relay_upstream_response(res).await,
             Err(e) => normalize_upstream_error(e),
         }
+    } else if fallback::is_dead_upstream_model(&body.model) {
+        // The original Blackbox upstreams for these model names are offline
+        // (Cloud Run 404s). Re-route to verified-live equivalents instead of
+        // returning a guaranteed-failure 502.
+        match fallback::post_fallback(&state.kilo_provider, body).await {
+            Ok(res) => relay_upstream_response(res).await,
+            Err(e) => normalize_upstream_error(e),
+        }
     } else {
         match state.provider.post_chat(api_key, body).await {
             Ok(res) => relay_upstream_response(res).await,
@@ -255,6 +264,13 @@ async fn handle_models() -> impl IntoResponse {
         ("inclusionai/ring-2.6-1t:free", "inclusionai"),
         ("inclusionai/ling-2.6-flash:free", "inclusionai"),
         ("google/gemma-4-26b-a4b:free", "google"),
+        ("qwen/qwen3.8-27b:free", "qwen"),
+        ("poolside/laguna-xs-2.1:free", "poolside"),
+        ("poolside/laguna-s-2.1:free", "poolside"),
+        ("liquid/lfm-2.5-2.6b:free", "liquid"),
+        // Live fallback targets served under the original Blackbox names
+        ("fallback-minimax", "nvidia"),
+        ("fallback-kimi", "qwen"),
     ];
     let data: Vec<_> = model_list
         .iter()
@@ -474,13 +490,94 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["object"], "list");
         let data = json["data"].as_array().unwrap();
-        assert_eq!(data.len(), 13);
+        assert_eq!(data.len(), 19);
         for m in crate::kilo::KILO_MODELS {
             assert!(
                 data.iter().any(|d| d["id"] == *m),
                 "model {m} missing from /v1/models"
             );
         }
+    }
+
+#[test]
+    fn dead_upstream_aliases_are_recognized() {
+        use crate::fallback::{dead_upstream_for, is_dead_upstream_model};
+        for m in ["minimax-m2.7", "MINIMAX-M2", "gpt-5.5", "kimi-k2.6", "KIMI",
+                  "moonshotai/kimi-k2.6", "gpt-4o-mini", "gpt-5.4-mini",
+                  "custom/blackbox-base-2", "gpt-5.4"] {
+            assert!(is_dead_upstream_model(m), "{m} should be a dead-upstream alias");
+        }
+        // Kilo-native and unknown models must NOT be captured by the table.
+        assert!(!is_dead_upstream_model("kilo-auto/free"));
+        assert!(!is_dead_upstream_model("some/unknown-model"));
+        let e = dead_upstream_for("Kimi-K2.6").unwrap();
+        assert_eq!(e.blackbox_name, "kimi-k2.6");
+    }
+
+    #[tokio::test]
+    async fn dead_upstream_model_serves_fallback_completion_end_to_end() {
+        use crate::fallback;
+        // Mock "live Kilo gateway": returns a valid completion for any model.
+        let kilo_json = r#"{"id":"c","object":"chat.completion","created":1,"model":"stepfun/step-3.7-flash:free","choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}"#.to_string();
+        let mock = axum::Router::new().route(
+            "/",
+            axum::routing::post(move || {
+                let body = kilo_json.clone();
+                async move {
+                    (
+                        StatusCode::OK,
+                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                        body,
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+
+        let client = reqwest::Client::new();
+        let kilo = KiloProvider::new_at(client.clone(), format!("http://{}/", addr));
+
+        // Every dead Blackbox alias must resolve to a live replacement that
+        // is itself routable through the Kilo provider...
+        for m in ["minimax-m2.7", "kimi-k2.6", "gpt-4o-mini", "custom/blackbox-base-2"] {
+            let entry = fallback::dead_upstream_for(m).expect("alias mapped");
+            for r in entry.replacements {
+                assert!(
+                    KiloProvider::is_kilo_model(r),
+                    "replacement {r} for {m} must be routable through the Kilo provider"
+                );
+            }
+        }
+
+        // ...and the full fallback path serves a real completion end-to-end.
+        let body = serde_json::from_value::<crate::models::ChatCompletionRequest>(
+            serde_json::json!({
+                "model": "minimax-m2.7",
+                "messages": [{"role": "user", "content": "hi"}]
+            }),
+        )
+        .unwrap();
+        let res = fallback::post_fallback(&kilo, body).await.expect("fallback succeeds");
+        assert_eq!(res.status(), StatusCode::OK);
+        let relayed = relay_upstream_response(res).await;
+        assert_eq!(relayed.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(relayed.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["choices"][0]["message"]["content"], "OK");
+
+        // The relay of a mocked dead-Blackbox HTML 404 yields a JSON 502
+        // (used when every fallback also fails), never raw HTML.
+        let resp = http::Response::builder()
+            .status(404)
+            .header("content-type", "text/html")
+            .body("<html><body>404 page not found</body></html>".to_string())
+            .unwrap();
+        let res = relay_upstream_response(reqwest::Response::from(resp)).await;
+        assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+        let bytes = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).expect("error body must be JSON");
     }
 
     #[tokio::test]
