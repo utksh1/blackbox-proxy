@@ -1,10 +1,8 @@
 use std::env;
-use std::time::Duration;
 
 use reqwest::{Client, header};
-use tokio::time::timeout;
 
-use crate::models::{ChatCompletionRequest, ChatCompletionResponse};
+use crate::models::ChatCompletionRequest;
 use crate::vscode::extract_vscode_blackbox_tokens;
 use crate::utils::random_id;
 
@@ -162,5 +160,47 @@ impl BlackboxProvider {
         }
 
         req.json(&body).send().await.map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_model_id_aliases() {
+        assert_eq!(BlackboxProvider::normalize_model_id("kimi-k2.6"), "moonshotai/kimi-k2.6");
+        assert_eq!(BlackboxProvider::normalize_model_id("KIMI"), "moonshotai/kimi-k2.6");
+        assert_eq!(BlackboxProvider::normalize_model_id("gpt-5.5"), "minimax-m2.7");
+        assert_eq!(BlackboxProvider::normalize_model_id("5.4"), "custom/blackbox-base-2");
+        assert_eq!(BlackboxProvider::normalize_model_id("GPT-5.4-MINI"), "gpt-4o-mini");
+        // Unknown ids pass through unchanged.
+        assert_eq!(BlackboxProvider::normalize_model_id("minimax-m2.7"), "minimax-m2.7");
+        assert_eq!(BlackboxProvider::normalize_model_id("weird/Model"), "weird/Model");
+    }
+
+    #[test]
+    fn is_minimax_model_variants() {
+        assert!(BlackboxProvider::is_minimax_model("minimax-m2.7"));
+        assert!(BlackboxProvider::is_minimax_model("MINIMAX-M2"));
+        assert!(BlackboxProvider::is_minimax_model("openrouter/minimax-m2-thinking"));
+        assert!(!BlackboxProvider::is_minimax_model("kimi-k2.6"));
+        assert!(!BlackboxProvider::is_minimax_model("gpt-4o-mini"));
+    }
+
+    #[test]
+    fn is_kimi_model_only_after_normalization() {
+        assert!(BlackboxProvider::is_kimi_model("moonshotai/kimi-k2.6"));
+        assert!(!BlackboxProvider::is_kimi_model("kimi-k2.6"));
+    }
+
+    #[test]
+    fn placeholder_keys_are_detected() {
+        assert!(BlackboxProvider::is_placeholder_key(None));
+        assert!(BlackboxProvider::is_placeholder_key(Some(&"".to_string())));
+        assert!(BlackboxProvider::is_placeholder_key(Some(&"   ".to_string())));
+        assert!(BlackboxProvider::is_placeholder_key(Some(&"xxx".to_string())));
+        assert!(BlackboxProvider::is_placeholder_key(Some(&"minimax-no-key-required".to_string())));
+        assert!(!BlackboxProvider::is_placeholder_key(Some(&"sk-live-key".to_string())));
     }
 }

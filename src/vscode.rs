@@ -172,3 +172,68 @@ pub fn extract_vscode_blackbox_tokens() -> BlackboxTokens {
     *cache = Some((tokens.clone(), Instant::now()));
     tokens
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_customer_id_case_insensitively() {
+        let value = json!({ "CustomerId": "  cust-123  ", "other": 1});
+        let mut tokens = BlackboxTokens { customer_id: None, api_key: None };
+        extract_tokens_from_object(&value, &mut tokens);
+        assert_eq!(tokens.customer_id.as_deref(), Some("cust-123"));
+        assert_eq!(tokens.api_key, None);
+    }
+
+    #[test]
+    fn extracts_api_key_from_nested_objects() {
+        let value = json!({
+            "item": {
+                "state": {
+                    "auth": { "apiKey": "sk-secret" }
+                }
+            }
+        });
+        let mut tokens = BlackboxTokens { customer_id: None, api_key: None };
+        extract_tokens_from_object(&value, &mut tokens);
+        assert_eq!(tokens.api_key.as_deref(), Some("sk-secret"));
+    }
+
+    #[test]
+    fn accepts_subscription_id_and_fallback_apikey() {
+        let value = json!({ "subscriptionId": "sub-9", "fallback_apikey": "fb-key" });
+        let mut tokens = BlackboxTokens { customer_id: None, api_key: None };
+        extract_tokens_from_object(&value, &mut tokens);
+        assert_eq!(tokens.customer_id.as_deref(), Some("sub-9"));
+        assert_eq!(tokens.api_key.as_deref(), Some("fb-key"));
+    }
+
+    #[test]
+    fn ignores_empty_string_values() {
+        let value = json!({ "customerId": "", "apiKey": "   " });
+        let mut tokens = BlackboxTokens { customer_id: None, api_key: None };
+        extract_tokens_from_object(&value, &mut tokens);
+        assert_eq!(tokens.customer_id, None);
+        assert_eq!(tokens.api_key, None);
+    }
+
+    #[test]
+    fn ignores_non_string_values() {
+        let value = json!({ "customerId": 42, "apiKey": null });
+        let mut tokens = BlackboxTokens { customer_id: None, api_key: None };
+        extract_tokens_from_object(&value, &mut tokens);
+        assert_eq!(tokens.customer_id, None);
+        assert_eq!(tokens.api_key, None);
+    }
+
+    #[test]
+    fn extract_vscode_blackbox_tokens_never_panics_without_vscode() {
+        // On machines without VS Code installed this must return empty tokens,
+        // not panic. (Results are cached; either way the call is safe.)
+        let tokens = extract_vscode_blackbox_tokens();
+        let _ = tokens.customer_id;
+        let _ = tokens.api_key;
+    }
+}

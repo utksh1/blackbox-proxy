@@ -1,4 +1,4 @@
-use rand::Rng;
+
 
 pub fn random_id(len: usize) -> String {
     let mut hex = String::with_capacity(len * 2);
@@ -36,5 +36,20 @@ mod tests {
     fn test_random_id() {
         let id = random_id(16);
         assert_eq!(id.len(), 32);
+    }
+
+    #[test]
+    fn generate_uuid_has_v4_shape_and_variant_bits() {
+        let uuid = generate_uuid();
+        let parts: Vec<&str> = uuid.split('-').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(uuid.len(), 36);
+        assert_eq!(&parts[2][..1], "4"); // version 4
+        assert!("89ab".contains(&parts[3][..1])); // variant bits
+    }
+
+    #[test]
+    fn random_ids_are_unique() {
+        assert_ne!(random_id(16), random_id(16));
     }
 }

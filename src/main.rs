@@ -5,7 +5,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde_json::Value;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,61 +13,148 @@ use tower_http::trace::TraceLayer;
 
 // Removed mimalloc to simplify Docker builds on low-RAM instances
 
-mod blackbox;
-mod kilo;
-mod models;
-mod utils;
-mod vscode;
+pub mod blackbox;
+pub mod kilo;
+pub mod models;
+pub mod utils;
+pub mod vscode;
 
 use blackbox::BlackboxProvider;
 use kilo::KiloProvider;
 use models::ChatCompletionRequest;
 
-struct AppState {
-    provider: BlackboxProvider,
-    kilo_provider: KiloProvider,
-    proxy_api_key: String,
+pub struct AppState {
+    pub provider: BlackboxProvider,
+    pub kilo_provider: KiloProvider,
+    pub proxy_api_key: String,
 }
 
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt::init();
+/// Normalize the `Authorization` header into an incoming key.
+/// Returns `None` when no usable credential was supplied.
+pub fn extract_bearer_key(auth_header: Option<&str>) -> Option<String> {
+    let raw = auth_header?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    // Strip the "Bearer" scheme case-insensitively (RFC 7235 marks the
+    // scheme as case-insensitive; previously only exact "Bearer " matched,
+    // so "bearer <key>" or "Bearer\t<key>" were treated as raw keys).
+    let key = match raw.get(..6) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("bearer") => &raw[6..],
+        _ => raw,
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key.to_string())
+    }
+}
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+/// Validate the incoming proxy key. `Ok(())` means the request may proceed.
+///
+/// The key must equal `proxy_api_key`, be the internal minimax placeholder,
+/// or be a real upstream credential (`sk-...` for Blackbox API keys, or a
+/// `cus_...` customer token). Previously any string merely *starting* with
+/// `sk-`/`cus_` bypassed authentication entirely — an arbitrary client could
+/// smuggle its own credential past the gate without knowing the proxy key.
+pub fn validate_proxy_auth(incoming_key: Option<&str>, proxy_api_key: &str) -> Result<(), ()> {
+    if proxy_api_key.is_empty() {
+        return Ok(());
+    }
+    match incoming_key {
+        // Exact proxy key or the known no-key placeholder are accepted.
+        Some(k) if k == proxy_api_key || k == "minimax-no-key-required" => Ok(()),
+        // Real upstream credentials must be well-formed, not just prefixed.
+        Some(k) if is_valid_upstream_credential(k) => Ok(()),
+        _ => Err(()),
+    }
+}
 
-    let client = reqwest::Client::builder()
-        .pool_max_idle_per_host(10)
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap();
+fn is_valid_upstream_credential(key: &str) -> bool {
+    if let Some(rest) = key.strip_prefix("sk-") {
+        // Blackbox API keys: hex/alnum ids of realistic length.
+        !rest.is_empty() && rest.len() >= 20 && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    } else if let Some(rest) = key.strip_prefix("cus_") {
+        // Blackbox customer tokens.
+        !rest.is_empty() && rest.len() >= 10 && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    } else {
+        false
+    }
+}
 
-    let state = Arc::new(AppState {
-        provider: BlackboxProvider::new(client.clone()),
-        kilo_provider: KiloProvider::new(client),
-        proxy_api_key: env::var("PROXY_API_KEY").unwrap_or_else(|_| "xyz".to_string()),
-    });
+/// Turn an upstream failure into a clean JSON error response.
+///
+/// Fixes two problems: (1) transport errors used to surface as opaque
+/// 500s, and (2) upstream bodies that were HTML/error pages (e.g. Cloud Run
+/// 404 "The request Cloud Run instance no longer exists") were forwarded
+/// verbatim, which clients could not parse. Non-JSON upstream bodies are now
+/// wrapped into a structured OpenAI-style error object with a 502 status.
+pub fn normalize_upstream_error(err: String) -> axum::response::Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(serde_json::json!({
+            "error": {
+                "message": err,
+                "type": "upstream_error",
+                "code": "upstream_request_failed"
+            }
+        })),
+    )
+        .into_response()
+}
 
-    let app = Router::new()
-        .route("/v1/chat/completions", post(handle_chat_completions))
-        .route("/v1/models", get(handle_models))
-        .route("/docs", get(swagger_ui))
-        .route("/docs/", get(swagger_ui))
-        .route("/openapi.yaml", get(openapi_yaml))
-        .layer(TraceLayer::new_for_http())
-        .layer(cors)
-        .with_state(state);
+/// Forward an upstream response, normalizing non-JSON error bodies.
+pub async fn relay_upstream_response(res: reqwest::Response) -> axum::response::Response {
+    let status = res.status();
+    let content_type = res
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let looks_like_json = content_type.contains("json");
 
-    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+    if status.is_success() || looks_like_json {
+        // Pass through streaming/success responses untouched.
+        let mut builder = axum::response::Response::builder().status(status);
+        for (k, v) in res.headers().iter() {
+            builder = builder.header(k, v);
+        }
+        let body = axum::body::Body::from_stream(res.bytes_stream());
+        return builder.body(body).unwrap();
+    }
 
-    tracing::info!("🚀 Blackbox Provider running at http://{}", addr);
+    // Error status with a non-JSON body (HTML gateway page, plain text):
+    // read it and wrap into structured JSON so clients get parseable errors.
+    let body_text = res.text().await.unwrap_or_default();
+    // Strip markup so raw HTML never leaks into the JSON message.
+    let stripped = strip_html_tags(&body_text);
+    let snippet: String = stripped.trim().chars().take(300).collect();
+    tracing::warn!("Upstream returned {} with non-JSON body: {}", status, snippet);
+    let message = format!(
+        "Upstream returned HTTP {status}: {}",
+        if snippet.is_empty() {
+            "(empty body)".to_string()
+        } else {
+            snippet
+        }
+    );
+    normalize_upstream_error(message)
+}
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+fn strip_html_tags(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
 }
 
 async fn handle_chat_completions(
@@ -79,27 +165,29 @@ async fn handle_chat_completions(
     let auth_header = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+        .map(|s| s.to_string());
 
-    let mut incoming_key = auth_header.strip_prefix("Bearer ").unwrap_or(&auth_header).trim().to_string();
+    let incoming_key = extract_bearer_key(auth_header.as_deref());
 
-    if !state.proxy_api_key.is_empty() {
-        if incoming_key != state.proxy_api_key && incoming_key != "minimax-no-key-required" {
-            if !incoming_key.starts_with("sk-") && !incoming_key.starts_with("cus_") {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({ "error": "Unauthorized: Invalid PROXY_API_KEY" })),
-                ).into_response();
-            }
-        }
-        
-        if incoming_key == state.proxy_api_key {
-            incoming_key = "".to_string();
-        }
+    if validate_proxy_auth(incoming_key.as_deref(), &state.proxy_api_key).is_err() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "Unauthorized: Invalid PROXY_API_KEY",
+                    "type": "invalid_request_error",
+                    "code": "invalid_api_key"
+                }
+            })),
+        )
+            .into_response();
     }
 
-    let api_key = if incoming_key.is_empty() { None } else { Some(incoming_key) };
+    // Proxy key / placeholder are not forwarded upstream as user credentials.
+    let api_key = match incoming_key {
+        Some(k) if k == state.proxy_api_key || k == "minimax-no-key-required" => None,
+        other => other,
+    };
 
     // Normalize tools (simple implementation)
     if let Some(tools) = &mut body.tools {
@@ -114,13 +202,18 @@ async fn handle_chat_completions(
                         let type_str = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         let inner = obj.get("function").or_else(|| obj.get(type_str)).unwrap_or(val);
                         if let Some(inner_obj) = inner.as_object() {
-                            if let Some(name_val) = inner_obj.get("name").or_else(|| obj.get("name")).or_else(|| obj.get("type")) {
+                            if let Some(name_val) =
+                                inner_obj.get("name").or_else(|| obj.get("name")).or_else(|| obj.get("type"))
+                            {
                                 if let Some(name) = name_val.as_str() {
                                     valid_tools.push(models::ChatToolDefinition::Strict {
                                         r#type: "function".to_string(),
                                         function: models::FunctionDefinition {
                                             name: name.to_string(),
-                                            description: inner_obj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                            description: inner_obj
+                                                .get("description")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string()),
                                             parameters: inner_obj.get("parameters").cloned(),
                                         },
                                     });
@@ -134,134 +227,47 @@ async fn handle_chat_completions(
         body.tools = if valid_tools.is_empty() { None } else { Some(valid_tools) };
     }
 
-    if kilo::KiloProvider::is_kilo_model(&body.model) {
+    if KiloProvider::is_kilo_model(&body.model) {
         match state.kilo_provider.post_chat(body).await {
-            Ok(res) => {
-                let mut response_builder = axum::response::Response::builder()
-                    .status(res.status());
-                for (k, v) in res.headers().iter() {
-                    response_builder = response_builder.header(k, v);
-                }
-                let stream = res.bytes_stream();
-                let body = axum::body::Body::from_stream(stream);
-                return response_builder.body(body).unwrap();
-            }
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e })),
-                ).into_response();
-            }
+            Ok(res) => relay_upstream_response(res).await,
+            Err(e) => normalize_upstream_error(e),
         }
-    }
-
-    match state.provider.post_chat(api_key, body).await {
-        Ok(res) => {
-            let mut response_builder = axum::response::Response::builder()
-                .status(res.status());
-            
-            for (k, v) in res.headers().iter() {
-                response_builder = response_builder.header(k, v);
-            }
-            
-            let stream = res.bytes_stream();
-            let body = axum::body::Body::from_stream(stream);
-            response_builder.body(body).unwrap()
-        }
-        Err(e) => {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e })),
-            ).into_response()
+    } else {
+        match state.provider.post_chat(api_key, body).await {
+            Ok(res) => relay_upstream_response(res).await,
+            Err(e) => normalize_upstream_error(e),
         }
     }
 }
 
 async fn handle_models() -> impl IntoResponse {
-    let models = serde_json::json!({
-        "object": "list",
-        "data": [
-            {
-                "id": "minimax-m2.7",
+    let model_list = [
+        ("minimax-m2.7", "minimax"),
+        ("kimi-k2.6", "moonshot"),
+        ("custom/blackbox-base-2", "blackbox"),
+        ("gpt-4o-mini", "openai"),
+        ("kilo-auto/free", "kilo"),
+        ("openrouter/free", "openrouter"),
+        ("poolside/laguna-m.1:free", "poolside"),
+        ("stepfun/step-3.7-flash:free", "stepfun"),
+        ("nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia"),
+        ("nex/nex-n2-pro:free", "nex"),
+        ("inclusionai/ring-2.6-1t:free", "inclusionai"),
+        ("inclusionai/ling-2.6-flash:free", "inclusionai"),
+        ("google/gemma-4-26b-a4b:free", "google"),
+    ];
+    let data: Vec<_> = model_list
+        .iter()
+        .map(|(id, owned_by)| {
+            serde_json::json!({
+                "id": id,
                 "object": "model",
-                "owned_by": "minimax",
+                "owned_by": owned_by,
                 "free": true
-            },
-            {
-                "id": "kimi-k2.6",
-                "object": "model",
-                "owned_by": "moonshot",
-                "free": true
-            },
-            {
-                "id": "custom/blackbox-base-2",
-                "object": "model",
-                "owned_by": "blackbox",
-                "free": true
-            },
-            {
-                "id": "gpt-4o-mini",
-                "object": "model",
-                "owned_by": "openai",
-                "free": true
-            },
-            {
-                "id": "kilo-auto/free",
-                "object": "model",
-                "owned_by": "kilo",
-                "free": true
-            },
-            {
-                "id": "openrouter/free",
-                "object": "model",
-                "owned_by": "openrouter",
-                "free": true
-            },
-            {
-                "id": "poolside/laguna-m.1:free",
-                "object": "model",
-                "owned_by": "poolside",
-                "free": true
-            },
-            {
-                "id": "stepfun/step-3.7-flash:free",
-                "object": "model",
-                "owned_by": "stepfun",
-                "free": true
-            },
-            {
-                "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
-                "object": "model",
-                "owned_by": "nvidia",
-                "free": true
-            },
-            {
-                "id": "nex/nex-n2-pro:free",
-                "object": "model",
-                "owned_by": "nex",
-                "free": true
-            },
-            {
-                "id": "inclusionai/ring-2.6-1t:free",
-                "object": "model",
-                "owned_by": "inclusionai",
-                "free": true
-            },
-            {
-                "id": "inclusionai/ling-2.6-flash:free",
-                "object": "model",
-                "owned_by": "inclusionai",
-                "free": true
-            },
-            {
-                "id": "google/gemma-4-26b-a4b:free",
-                "object": "model",
-                "owned_by": "google",
-                "free": true
-            }
-        ]
-    });
-    Json(models)
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "object": "list", "data": data }))
 }
 
 async fn swagger_ui() -> Html<&'static str> {
@@ -290,4 +296,220 @@ async fn swagger_ui() -> Html<&'static str> {
 
 async fn openapi_yaml() -> &'static str {
     include_str!("openapi.yaml")
+}
+
+pub fn build_router(state: Arc<AppState>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    Router::new()
+        .route("/v1/chat/completions", post(handle_chat_completions))
+        .route("/v1/models", get(handle_models))
+        .route("/docs", get(swagger_ui))
+        .route("/docs/", get(swagger_ui))
+        .route("/openapi.yaml", get(openapi_yaml))
+        .layer(TraceLayer::new_for_http())
+        .layer(cors)
+        .with_state(state)
+}
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::init();
+
+    let client = reqwest::Client::builder()
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+
+    let state = Arc::new(AppState {
+        provider: BlackboxProvider::new(client.clone()),
+        kilo_provider: KiloProvider::new(client),
+        proxy_api_key: env::var("PROXY_API_KEY").unwrap_or_else(|_| "xyz".to_string()),
+    });
+
+    let app = build_router(state);
+
+    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+
+    tracing::info!("🚀 Blackbox Provider running at http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use http::{Request, Response};
+    use tower::ServiceExt;
+
+    #[test]
+    fn extract_bearer_key_handles_common_forms() {
+        assert_eq!(extract_bearer_key(Some("Bearer abc123")).as_deref(), Some("abc123"));
+        assert_eq!(extract_bearer_key(Some("bearer abc123")).as_deref(), Some("abc123"));
+        // Regression: a raw key that merely starts with the letters "bearer"
+        // must keep its payload intact (only the scheme prefix is stripped).
+        assert_eq!(extract_bearer_key(Some("bearkey-1")).as_deref(), Some("bearkey-1"));
+        assert_eq!(extract_bearer_key(Some("  Bearer   spaced  ")).as_deref(), Some("spaced"));
+        assert_eq!(extract_bearer_key(Some("rawkey")), Some("rawkey".to_string()));
+        assert_eq!(extract_bearer_key(None), None);
+        assert_eq!(extract_bearer_key(Some("")), None);
+        assert_eq!(extract_bearer_key(Some("Bearer ")), None);
+    }
+
+    #[test]
+    fn auth_accepts_exact_proxy_key_and_placeholder() {
+        assert!(validate_proxy_auth(Some("xyz"), "xyz").is_ok());
+        assert!(validate_proxy_auth(Some("minimax-no-key-required"), "xyz").is_ok());
+        assert!(validate_proxy_auth(Some("anything"), "").is_ok()); // auth disabled
+    }
+
+    #[test]
+    fn auth_rejects_missing_or_wrong_keys() {
+        assert!(validate_proxy_auth(None, "xyz").is_err());
+        assert!(validate_proxy_auth(Some("wrong"), "xyz").is_err());
+        assert!(validate_proxy_auth(Some(""), "xyz").is_err());
+    }
+
+    #[test]
+    fn auth_rejects_malformed_prefix_bypass_attempts() {
+        // Regression: previously ANY key starting with "sk-"/"cus_" bypassed the gate.
+        assert!(validate_proxy_auth(Some("sk-"), "xyz").is_err());
+        assert!(validate_proxy_auth(Some("sk-x"), "xyz").is_err());
+        assert!(validate_proxy_auth(Some("cus_"), "xyz").is_err());
+        assert!(validate_proxy_auth(Some("sk-not a real key!"), "xyz").is_err());
+    }
+
+    #[test]
+    fn auth_accepts_wellformed_upstream_credentials() {
+        let sk = format!("sk-{}", "a".repeat(24));
+        assert!(validate_proxy_auth(Some(&sk), "xyz").is_ok());
+        let cus = format!("cus_{}", "b".repeat(16));
+        assert!(validate_proxy_auth(Some(&cus), "xyz").is_ok());
+    }
+
+    #[tokio::test]
+    async fn upstream_error_is_json_502() {
+        let res = normalize_upstream_error("boom".to_string());
+        assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+        let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["message"], "boom");
+        assert_eq!(json["error"]["type"], "upstream_error");
+    }
+
+    #[tokio::test]
+    async fn relay_passes_through_success_json() {
+        let resp = Response::builder()
+                    .status(200)
+                    .header("content-type", "application/json")
+                    .body(r#"{"ok":true}"#.to_string())
+                    .unwrap();
+        let upstream = reqwest::Response::from(resp);
+        let res = relay_upstream_response(upstream).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        assert_eq!(bytes.as_ref(), b"{\"ok\":true}");
+    }
+
+    #[tokio::test]
+    async fn relay_normalizes_html_error_pages_to_json_502() {
+        // Regression: dead Cloud Run backends returned HTML 404 pages which
+        // were previously forwarded verbatim to clients.
+        let resp = Response::builder()
+                    .status(404)
+                    .header("content-type", "text/html")
+                    .body("<html><head></head><body>404 page not found</body></html>".to_string())
+                    .unwrap();
+        let upstream = reqwest::Response::from(resp);
+        let res = relay_upstream_response(upstream).await;
+        assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+        let bytes = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["type"], "upstream_error");
+        let msg = json["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("404"), "message should mention upstream status: {msg}");
+        assert!(!msg.contains("<html>"), "raw HTML must not leak into JSON message");
+    }
+
+    #[tokio::test]
+    async fn relay_preserves_upstream_json_errors() {
+        let resp = Response::builder()
+                    .status(429)
+                    .header("content-type", "application/json")
+                    .body(r#"{"error":{"message":"rate limited"}}"#.to_string())
+                    .unwrap();
+        let upstream = reqwest::Response::from(resp);
+        let res = relay_upstream_response(upstream).await;
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn models_endpoint_lists_all_models() {
+        let state = Arc::new(AppState {
+            provider: BlackboxProvider::new(reqwest::Client::new()),
+            kilo_provider: KiloProvider::new(reqwest::Client::new()),
+            proxy_api_key: "test-key".to_string(),
+        });
+        let app = build_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(res.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["object"], "list");
+        let data = json["data"].as_array().unwrap();
+        assert_eq!(data.len(), 13);
+        for m in crate::kilo::KILO_MODELS {
+            assert!(
+                data.iter().any(|d| d["id"] == *m),
+                "model {m} missing from /v1/models"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_completions_rejects_bad_key_with_structured_401() {
+        let state = Arc::new(AppState {
+            provider: BlackboxProvider::new(reqwest::Client::new()),
+            kilo_provider: KiloProvider::new(reqwest::Client::new()),
+            proxy_api_key: "test-key".to_string(),
+        });
+        let app = build_router(state);
+        let body = serde_json::json!({
+            "model": "minimax-m2.7",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .header("authorization", "Bearer totally-wrong")
+                    .header("content-type", "application/json")
+                    .body(body.to_string())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let bytes = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "invalid_api_key");
+    }
 }

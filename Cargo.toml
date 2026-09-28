@@ -23,3 +23,8 @@ codegen-units = 256
 debug = false
 strip = true
 panic = "abort"
+
+[dev-dependencies]
+http = "1"
+hyper-util = { version = "0.1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
